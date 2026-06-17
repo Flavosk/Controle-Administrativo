@@ -1,0 +1,265 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+from datetime import datetime
+import json
+import os
+import sys
+
+# Determina o caminho correto para o arquivo JSON
+if getattr(sys, 'frozen', False):
+    # Quando executado como EXE, o caminho do executável é sys.executable
+    CAMINHO_EXECUTAVEL = os.path.dirname(sys.executable)
+else:
+    # Quando executado como script Python
+    CAMINHO_EXECUTAVEL = os.path.dirname(os.path.abspath(__file__))
+
+ARQUIVO_DADOS = os.path.join(CAMINHO_EXECUTAVEL, "dados.json")
+
+# Lista de estoque e histórico de vendas
+estoque = []
+historico_vendas = []
+
+def carregar_dados():
+    """Carrega os dados do arquivo JSON, se existir."""
+    global estoque, historico_vendas
+    if os.path.exists(ARQUIVO_DADOS):
+        try:
+            with open(ARQUIVO_DADOS, "r", encoding="utf-8") as f:
+                dados = json.load(f)
+                estoque = dados.get("estoque", [])
+                historico_vendas = dados.get("historico_vendas", [])
+            # Atualiza a tabela após carregar os dados
+            atualizar_tabela()
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao carregar dados: {e}")
+    else:
+        messagebox.showinfo("Info", "Nenhum dado encontrado. Um novo arquivo será criado.")
+
+def salvar_dados():
+    """Salva os dados no arquivo JSON."""
+    dados = {
+        "estoque": estoque,
+        "historico_vendas": historico_vendas
+    }
+    try:
+        with open(ARQUIVO_DADOS, "w", encoding="utf-8") as f:
+            json.dump(dados, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        messagebox.showerror("Erro", f"Erro ao salvar dados: {e}")
+
+def adicionar_produto():
+    nome = entry_nome.get().strip()
+    preco = entry_preco.get().strip()
+    if nome and preco:
+        try:
+            preco = float(preco)
+            data_entrada = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+            estoque.append({'nome': nome, 'preco': preco, 'data_entrada': data_entrada})
+            atualizar_tabela()
+            entry_nome.delete(0, tk.END)
+            entry_preco.delete(0, tk.END)
+            salvar_dados()  # Salva os dados após adicionar um produto
+        except ValueError:
+            messagebox.showerror("Erro", "Digite um valor numérico para o preço.")
+    else:
+        messagebox.showerror("Erro", "Preencha todos os campos.")
+
+def atualizar_tabela(filtro=None):
+    for item in tabela.get_children():
+        tabela.delete(item)
+    # Ordenar estoque alfabeticamente
+    estoque_ordenado = sorted(estoque, key=lambda x: x['nome'])
+    for item in estoque_ordenado:
+        if filtro:
+            if filtro.lower() in item['nome'].lower():  # Filtro case-insensitive
+                tabela.insert("", "end", values=(item['nome'], f"R$ {item['preco']:.2f}", item['data_entrada']))
+        else:
+            tabela.insert("", "end", values=(item['nome'], f"R$ {item['preco']:.2f}", item['data_entrada']))
+
+def remover_produto():
+    selected_item = tabela.selection()
+    if not selected_item:
+        messagebox.showwarning("Aviso", "Selecione um item para remover.")
+        return
+    for item in selected_item:
+        valores = tabela.item(item, "values")
+        for produto in estoque:
+            if produto['nome'] == valores[0] and f"R$ {produto['preco']:.2f}" == valores[1]:
+                estoque.remove(produto)
+                break
+    atualizar_tabela()
+    salvar_dados()  # Salva os dados após remover um produto
+
+def vender_produto():
+    selected_item = tabela.selection()
+    if not selected_item:
+        messagebox.showwarning("Aviso", "Selecione um item para vender.")
+        return
+    for item in selected_item:
+        valores = tabela.item(item, "values")
+        for produto in estoque:
+            if produto['nome'] == valores[0] and f"R$ {produto['preco']:.2f}" == valores[1]:
+                # Remove o produto do estoque
+                estoque.remove(produto)
+                # Adiciona a venda ao histórico
+                historico_vendas.append({
+                    'nome': produto['nome'],
+                    'preco': produto['preco'],
+                    'data_saida': datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+                })
+                break
+    atualizar_tabela()
+    salvar_dados()  # Salva os dados após vender um produto
+    messagebox.showinfo("Sucesso", "Produto vendido e adicionado ao relatório de vendas.")
+
+def relatorio_vendas():
+    mes_atual = datetime.now().strftime('%m/%Y')
+    total_vendido = 0
+    vendas_mes = []
+    for venda in historico_vendas:
+        data_venda = venda['data_saida'].split()[0]  # Pega apenas a data (ignora a hora)
+        if data_venda.endswith(mes_atual):
+            total_vendido += venda['preco']
+            vendas_mes.append(venda)
+    
+    # Criar uma nova janela para exibir o relatório detalhado
+    relatorio_window = tk.Toplevel(root)
+    relatorio_window.title("Relatório Mensal de Vendas")
+    relatorio_window.geometry("600x400")
+
+    # Tabela de relatório
+    colunas_relatorio = ("Nome", "Preço", "Data e Hora da Venda")
+    tabela_relatorio = ttk.Treeview(relatorio_window, columns=colunas_relatorio, show="headings")
+    for col in colunas_relatorio:
+        tabela_relatorio.heading(col, text=col)
+        tabela_relatorio.column(col, anchor="center")
+
+    # Inserir as vendas do mês na tabela
+    for venda in sorted(vendas_mes, key=lambda x: x['nome']):  # Ordenar alfabeticamente
+        tabela_relatorio.insert("", "end", values=(venda['nome'], f"R$ {venda['preco']:.2f}", venda['data_saida']))
+
+    tabela_relatorio.pack(fill=tk.BOTH, expand=True)
+
+    # Exibir o total vendido no mês
+    label_total = tk.Label(relatorio_window, text=f"Total vendido no mês: R$ {total_vendido:.2f}", font=("Arial", 12))
+    label_total.pack(pady=10)
+
+    # Campo de busca
+    ttk.Label(relatorio_window, text="Buscar Produto:").pack()
+    entry_busca_vendas = ttk.Entry(relatorio_window)
+    entry_busca_vendas.pack()
+
+    def filtrar_relatorio_vendas(event=None):
+        filtro_vendas = entry_busca_vendas.get().strip()
+        for item in tabela_relatorio.get_children():
+            tabela_relatorio.delete(item)
+        for venda in sorted(vendas_mes, key=lambda x: x['nome']):
+            if filtro_vendas.lower() in venda['nome'].lower():  # Filtro case-insensitive
+                tabela_relatorio.insert("", "end", values=(venda['nome'], f"R$ {venda['preco']:.2f}", venda['data_saida']))
+
+    entry_busca_vendas.bind("<KeyRelease>", filtrar_relatorio_vendas)  # Atualiza a tabela ao digitar
+
+    # Função para relançar item
+    def relancar_item():
+        selected_item = tabela_relatorio.selection()
+        if not selected_item:
+            messagebox.showwarning("Aviso", "Selecione uma venda para relançar.")
+            return
+        for item in selected_item:
+            valores = tabela_relatorio.item(item, "values")
+            for venda in historico_vendas:
+                if venda['nome'] == valores[0] and f"R$ {venda['preco']:.2f}" == valores[1]:
+                    # Adicionar de volta ao estoque
+                    estoque.append({
+                        'nome': venda['nome'],
+                        'preco': venda['preco'],
+                        'data_entrada': datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+                    })
+                    # Remover do histórico de vendas
+                    historico_vendas.remove(venda)
+                    break
+        # Atualizar as tabelas
+        atualizar_tabela()
+        salvar_dados()  # Salva os dados após relançar o item
+        messagebox.showinfo("Sucesso", "Produto relançado para o estoque.")
+
+    ttk.Button(relatorio_window, text="Relançar", command=relancar_item).pack(pady=10)
+
+    # Remover venda
+    def remover_venda():
+        selected_item = tabela_relatorio.selection()
+        if not selected_item:
+            messagebox.showwarning("Aviso", "Selecione uma venda para remover.")
+            return
+        for item in selected_item:
+            valores = tabela_relatorio.item(item, "values")
+            for venda in historico_vendas:
+                if venda['nome'] == valores[0] and f"R$ {venda['preco']:.2f}" == valores[1]:
+                    historico_vendas.remove(venda)
+                    break
+        # Fechar a janela de relatório e reabri-la para refletir a remoção
+        relatorio_window.destroy()
+        relatorio_vendas()
+
+    ttk.Button(relatorio_window, text="Remover Venda", command=remover_venda).pack(pady=10)
+
+def filtrar_tabela(event=None):
+    filtro = entry_busca.get().strip()
+    atualizar_tabela(filtro)
+
+# Interface Gráfica
+root = tk.Tk()
+root.title("BOB GAMESTORE - Controle de Estoque")
+root.geometry("800x500")
+
+# Logotipo BOB GAMESTORE
+titulo = tk.Label(root, text="BOB GAMESTORE", font=("Arial Black", 24), fg="blue")
+titulo.pack()
+
+# Frame principal
+frame = tk.Frame(root)
+frame.pack(pady=10)
+
+# Labels e Entradas
+frame_inputs = tk.Frame(frame)
+frame_inputs.pack(side=tk.LEFT, padx=20)
+
+ttk.Label(frame_inputs, text="Nome do Produto:").pack()
+entry_nome = ttk.Entry(frame_inputs)
+entry_nome.pack()
+
+ttk.Label(frame_inputs, text="Preço:").pack()
+entry_preco = ttk.Entry(frame_inputs)
+entry_preco.pack()
+
+# Campo de busca
+ttk.Label(frame_inputs, text="Buscar Produto:").pack()
+entry_busca = ttk.Entry(frame_inputs)
+entry_busca.pack()
+entry_busca.bind("<KeyRelease>", filtrar_tabela)  # Atualiza a tabela ao digitar
+
+# Botões
+frame_botoes = tk.Frame(frame)
+frame_botoes.pack(side=tk.LEFT, padx=20)
+
+ttk.Button(frame_botoes, text="Adicionar Produto", command=adicionar_produto).pack(fill=tk.X)
+ttk.Button(frame_botoes, text="Remover Produto", command=remover_produto).pack(fill=tk.X)
+ttk.Button(frame_botoes, text="Vender Produto", command=vender_produto).pack(fill=tk.X)
+ttk.Button(frame_botoes, text="Relatório de Vendas Mensal", command=relatorio_vendas).pack(fill=tk.X)
+
+# Tabela
+frame_tabela = tk.Frame(root)
+frame_tabela.pack(pady=10)
+
+colunas = ("Nome", "Preço", "Data de Entrada")
+tabela = ttk.Treeview(frame_tabela, columns=colunas, show="headings")
+for col in colunas:
+    tabela.heading(col, text=col)
+    tabela.column(col, anchor="center")
+
+tabela.pack()
+
+# Carregar dados APÓS a criação da interface
+carregar_dados()
+
+root.mainloop()
