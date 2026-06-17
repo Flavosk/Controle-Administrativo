@@ -1,0 +1,676 @@
+import tkinter as tk
+from tkinter import ttk, messagebox as mb
+from tkinter import filedialog
+import pandas as pd
+from datetime import datetime
+import os
+import json
+
+# === CONSTANTES DO LOGIN ===
+USUARIO_CORRETO = "vilaitamaraty"
+SENHA_CORRETA = "Sindicancia@26"
+MAX_TENTATIVAS = 3
+
+# === VARIÁVEIS GLOBAIS DO PROGRAMA ===
+ARQUIVO_DADOS = "dados_condominio.json"
+registros = []
+despesas_variaveis = []
+
+# Variáveis globais da interface
+root = None
+entry_luz = entry_agua = entry_jardineiro = entry_salario = None
+entry_servtec = entry_zelador = entry_tim = entry_arrecadado = None
+entry_mes_ano = None
+lista_variaveis = None
+tree = None
+
+# ============================================
+# ========== FUNÇÕES DO PROGRAMA PRINCIPAL ===
+# ============================================
+
+def carregar_dados():
+    """Carrega registros do arquivo JSON"""
+    global registros
+    if os.path.exists(ARQUIVO_DADOS):
+        try:
+            with open(ARQUIVO_DADOS, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                registros = data.get('registros', [])
+        except Exception as e:
+            print(f"Erro ao carregar dados: {e}")
+            registros = []
+    else:
+        registros = []
+
+def salvar_dados():
+    """Salva registros no arquivo JSON"""
+    global registros
+    try:
+        with open(ARQUIVO_DADOS, 'w', encoding='utf-8') as f:
+            json.dump({'registros': registros}, f, indent=4, ensure_ascii=False)
+    except Exception as e:
+        print(f"Erro ao salvar dados: {e}")
+
+def adicionar_despesa_variavel():
+    """Janela para adicionar despesa variável (nome, valor e anexo)"""
+    global despesas_variaveis
+    
+    dialog = tk.Toplevel()
+    dialog.title("Nova Despesa Variável")
+    dialog.geometry("450x280")
+    dialog.transient(root)
+    dialog.grab_set()
+    dialog.configure(bg="#f0f0f0")
+    
+    # Centralizar
+    dialog.update_idletasks()
+    x = root.winfo_x() + (root.winfo_width() // 2) - 225
+    y = root.winfo_y() + (root.winfo_height() // 2) - 140
+    dialog.geometry(f"+{x}+{y}")
+    
+    # Variáveis
+    nome_var = tk.StringVar()
+    valor_var = tk.DoubleVar()
+    anexo_path = tk.StringVar()
+    
+    # Nome
+    tk.Label(dialog, text="Nome da despesa:", bg="#f0f0f0", font=("Arial", 10)).pack(pady=(10,0))
+    entry_nome = tk.Entry(dialog, textvariable=nome_var, width=40, font=("Arial", 10))
+    entry_nome.pack(pady=5)
+    entry_nome.focus()
+    
+    # Valor
+    tk.Label(dialog, text="Valor (R$):", bg="#f0f0f0", font=("Arial", 10)).pack()
+    entry_valor = tk.Entry(dialog, textvariable=valor_var, width=40, font=("Arial", 10))
+    entry_valor.pack(pady=5)
+    
+    # Anexo
+    frame_anexo = tk.Frame(dialog, bg="#f0f0f0")
+    frame_anexo.pack(pady=10)
+    tk.Label(frame_anexo, text="Anexo (boleto/comprovante):", bg="#f0f0f0", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
+    
+    def selecionar_anexo():
+        caminho = filedialog.askopenfilename(
+            title="Selecionar comprovante/boleto",
+            filetypes=[("Imagens", "*.png *.jpg *.jpeg *.gif *.bmp"),
+                       ("PDF", "*.pdf"),
+                       ("Todos os arquivos", "*.*")]
+        )
+        if caminho:
+            anexo_path.set(caminho)
+            label_anexo.config(text=f"Anexo: {os.path.basename(caminho)}", fg="#2E7D32")
+    
+    tk.Button(frame_anexo, text="Selecionar Arquivo", command=selecionar_anexo, bg="#2196F3", fg="white").pack(side=tk.LEFT, padx=5)
+    
+    label_anexo = tk.Label(dialog, text="Nenhum anexo selecionado", fg="gray", bg="#f0f0f0")
+    label_anexo.pack(pady=5)
+    
+    # Confirmar
+    def confirmar():
+        nome = nome_var.get().strip()
+        if not nome:
+            mb.showerror("Erro", "Nome da despesa não pode estar vazio")
+            return
+        try:
+            valor = valor_var.get()
+            if valor <= 0:
+                raise ValueError
+        except:
+            mb.showerror("Erro", "Valor deve ser um número positivo")
+            return
+        anexo = anexo_path.get().strip()
+        despesas_variaveis.append({
+            "nome": nome,
+            "valor": valor,
+            "anexo": anexo if anexo else None
+        })
+        atualizar_lista_variaveis()
+        dialog.destroy()
+    
+    # Botões
+    frame_botoes = tk.Frame(dialog, bg="#f0f0f0")
+    frame_botoes.pack(pady=15)
+    tk.Button(frame_botoes, text="Adicionar", command=confirmar, width=10, bg="#4CAF50", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+    tk.Button(frame_botoes, text="Cancelar", command=dialog.destroy, width=10, bg="#f44336", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+    
+    entry_valor.bind("<Return>", lambda event: confirmar())
+    dialog.bind("<Escape>", lambda event: dialog.destroy())
+
+def remover_despesa_variavel():
+    """Remove a despesa variável selecionada"""
+    global despesas_variaveis
+    selecionado = lista_variaveis.curselection()
+    if selecionado:
+        indice = selecionado[0]
+        if mb.askyesno("Confirmar", f"Remover '{despesas_variaveis[indice]['nome']}'?"):
+            del despesas_variaveis[indice]
+            atualizar_lista_variaveis()
+
+def visualizar_anexo():
+    """Abre o anexo da despesa selecionada (se existir)"""
+    selecionado = lista_variaveis.curselection()
+    if not selecionado:
+        mb.showwarning("Aviso", "Selecione uma despesa para visualizar o anexo.")
+        return
+    indice = selecionado[0]
+    anexo = despesas_variaveis[indice].get("anexo")
+    if anexo and os.path.exists(anexo):
+        try:
+            os.startfile(anexo)
+        except:
+            mb.showerror("Erro", "Não foi possível abrir o arquivo.")
+    elif anexo:
+        mb.showerror("Erro", f"Arquivo não encontrado:\n{anexo}")
+    else:
+        mb.showinfo("Sem anexo", "Esta despesa não possui anexo.")
+
+def atualizar_lista_variaveis():
+    """Atualiza a Listbox com nome, valor e indicador de anexo"""
+    if lista_variaveis:
+        lista_variaveis.delete(0, tk.END)
+        for i, d in enumerate(despesas_variaveis):
+            texto = f"{i+1}. {d['nome']}: R$ {d['valor']:.2f}"
+            if d.get("anexo"):
+                texto += " 📎"
+            lista_variaveis.insert(tk.END, texto)
+
+def registrar_mes():
+    """Registra os dados do mês atual (fixos + variáveis + arrecadado)"""
+    global registros, despesas_variaveis
+    
+    # Validações
+    try:
+        valor_arrecadado = float(entry_arrecadado.get())
+        if valor_arrecadado <= 0:
+            raise ValueError
+    except ValueError:
+        mb.showerror("Erro", "Valor arrecadado deve ser um número positivo")
+        return
+
+    try:
+        luz = float(entry_luz.get())
+        agua = float(entry_agua.get())
+        jardineiro = float(entry_jardineiro.get())
+        salario_sindico = float(entry_salario.get())
+        servtec = float(entry_servtec.get())
+        zelador = float(entry_zelador.get())
+        tim = float(entry_tim.get())
+        if any(v < 0 for v in [luz, agua, jardineiro, salario_sindico, servtec, zelador, tim]):
+            raise ValueError
+    except ValueError:
+        mb.showerror("Erro", "Todos os custos fixos devem ser números válidos (>=0)")
+        return
+
+    mes_ano = entry_mes_ano.get().strip()
+    if not mes_ano:
+        mes_ano = datetime.now().strftime("%m/%Y")
+        entry_mes_ano.delete(0, tk.END)
+        entry_mes_ano.insert(0, mes_ano)
+    
+    # Verifica se o mês já foi registrado
+    for i, registro in enumerate(registros):
+        if registro["Mês/Ano"] == mes_ano:
+            if not mb.askyesno("Atenção", f"O mês {mes_ano} já foi registrado!\nDeseja substituir?"):
+                return
+            registros.pop(i)
+            break
+
+    total_fixos = luz + agua + jardineiro + salario_sindico + servtec + zelador + tim
+    total_variaveis = sum(d["valor"] for d in despesas_variaveis)
+    total_despesas = total_fixos + total_variaveis
+    saldo = valor_arrecadado - total_despesas
+
+    # Prepara detalhe variáveis com anexos
+    detalhe_variaveis = []
+    lista_anexos = []
+    for d in despesas_variaveis:
+        linha = f"{d['nome']}: R$ {d['valor']:.2f}"
+        if d.get("anexo"):
+            linha += f" [anexo: {os.path.basename(d['anexo'])}]"
+            lista_anexos.append(d['anexo'])
+        detalhe_variaveis.append(linha)
+    detalhe_str = "; ".join(detalhe_variaveis) if detalhe_variaveis else "Nenhuma"
+
+    registro = {
+        "Mês/Ano": mes_ano,
+        "Arrecadado (R$)": valor_arrecadado,
+        "Luz (R$)": luz,
+        "Água (R$)": agua,
+        "Jardineiro (R$)": jardineiro,
+        "Salário Síndico (R$)": salario_sindico,
+        "Servtec (R$)": servtec,
+        "Zelador (R$)": zelador,
+        "Tim (R$)": tim,
+        "Total Fixos (R$)": total_fixos,
+        "Total Variáveis (R$)": total_variaveis,
+        "Total Despesas (R$)": total_despesas,
+        "Saldo (R$)": saldo,
+        "Detalhe Variáveis": detalhe_str,
+        "Anexos": "; ".join(lista_anexos) if lista_anexos else ""
+    }
+
+    registros.append(registro)
+    salvar_dados()
+    atualizar_tabela_historico()
+
+    # Limpa despesas variáveis e campo arrecadado
+    despesas_variaveis = []
+    atualizar_lista_variaveis()
+    entry_arrecadado.delete(0, tk.END)
+
+    mb.showinfo("Sucesso", f"Mês {mes_ano} registrado com sucesso!\n"
+                          f"📊 Saldo: R$ {saldo:.2f}\n"
+                          f"💰 Arrecadado: R$ {valor_arrecadado:.2f}\n"
+                          f"💸 Despesas Totais: R$ {total_despesas:.2f}")
+
+def atualizar_tabela_historico():
+    """Atualiza a Treeview com registros ordenados"""
+    if tree is None:
+        return
+    
+    # Limpa a tabela
+    for row in tree.get_children():
+        tree.delete(row)
+    
+    # Ordena registros por mês/ano
+    registros_ordenados = sorted(registros, key=lambda x: x["Mês/Ano"], reverse=False)
+    
+    # Adiciona os registros na tabela
+    for r in registros_ordenados:
+        saldo = r["Saldo (R$)"]
+        cor = "green" if saldo >= 0 else "red"
+        
+        item = tree.insert("", tk.END, values=(
+            r["Mês/Ano"],
+            f"R$ {r['Arrecadado (R$)']:.2f}",
+            f"R$ {r['Total Despesas (R$)']:.2f}",
+            f"R$ {saldo:.2f}"
+        ))
+        
+        tree.item(item, tags=(cor,))
+    
+    # Configura as cores
+    tree.tag_configure("green", foreground="green")
+    tree.tag_configure("red", foreground="red")
+
+def exportar_para_excel():
+    """Exporta registros para Excel com hyperlinks"""
+    if not registros:
+        mb.showwarning("Aviso", "Nenhum registro para exportar.")
+        return
+
+    df = pd.DataFrame(registros)
+    df = df.sort_values("Mês/Ano")
+    df = df.round(2)
+
+    def criar_link(caminho_texto):
+        if not caminho_texto or pd.isna(caminho_texto) or caminho_texto == "":
+            return "Sem anexo"
+        
+        primeiro_anexo = caminho_texto.split(";")[0].strip()
+        
+        if os.path.exists(primeiro_anexo):
+            return f'=HYPERLINK("{primeiro_anexo}", "📎 Abrir anexo")'
+        else:
+            return f"⚠️ Arquivo não encontrado"
+
+    df["Anexo (clique para abrir)"] = df["Anexos"].apply(criar_link)
+    
+    colunas = ["Mês/Ano", "Arrecadado (R$)", "Luz (R$)", "Água (R$)", 
+               "Jardineiro (R$)", "Salário Síndico (R$)", "Servtec (R$)",
+               "Zelador (R$)", "Tim (R$)", "Total Fixos (R$)", 
+               "Total Variáveis (R$)", "Total Despesas (R$)", "Saldo (R$)",
+               "Detalhe Variáveis", "Anexo (clique para abrir)"]
+    
+    df = df[colunas]
+
+    nome_arquivo = f"relatorio_condominio_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    
+    try:
+        with pd.ExcelWriter(nome_arquivo, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name="Registros")
+            
+            worksheet = writer.sheets["Registros"]
+            
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        if cell.value and isinstance(cell.value, str):
+                            if cell.value.startswith("=HYPERLINK"):
+                                length = 15
+                            else:
+                                length = len(str(cell.value))
+                        else:
+                            length = len(str(cell.value))
+                        if length > max_length:
+                            max_length = length
+                    except:
+                        pass
+                adjusted_width = min(max_length + 2, 40)
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+            
+            worksheet.freeze_panes = 'A2'
+        
+        mb.showinfo("Exportado com Sucesso!", 
+                   f"✅ Dados exportados para:\n{nome_arquivo}\n\n"
+                   f"📎 A pasta com o arquivo será aberta.")
+        
+        if os.name == 'nt':
+            os.startfile(os.path.dirname(os.path.abspath(nome_arquivo)))
+    except Exception as e:
+        mb.showerror("Erro", f"Erro na exportação:\n{str(e)}")
+
+def limpar_campos():
+    """Limpa os campos de custos fixos e variáveis"""
+    if mb.askyesno("Confirmar", "Limpar todos os campos do mês atual?"):
+        entry_luz.delete(0, tk.END)
+        entry_luz.insert(0, "0")
+        entry_agua.delete(0, tk.END)
+        entry_agua.insert(0, "0")
+        entry_jardineiro.delete(0, tk.END)
+        entry_jardineiro.insert(0, "0")
+        entry_salario.delete(0, tk.END)
+        entry_salario.insert(0, "0")
+        entry_servtec.delete(0, tk.END)
+        entry_servtec.insert(0, "0")
+        entry_zelador.delete(0, tk.END)
+        entry_zelador.insert(0, "0")
+        entry_tim.delete(0, tk.END)
+        entry_tim.insert(0, "0")
+        entry_arrecadado.delete(0, tk.END)
+        global despesas_variaveis
+        despesas_variaveis = []
+        atualizar_lista_variaveis()
+        mb.showinfo("Limpo", "Campos limpos com sucesso!")
+
+def excluir_registro():
+    """Exclui o registro selecionado no histórico"""
+    selecionado = tree.selection()
+    if not selecionado:
+        mb.showwarning("Aviso", "Selecione um registro para excluir.")
+        return
+    
+    item = selecionado[0]
+    valores = tree.item(item)['values']
+    mes_ano = valores[0]
+    
+    if mb.askyesno("Confirmar Exclusão", f"Tem certeza que deseja excluir o registro de {mes_ano}?"):
+        for i, registro in enumerate(registros):
+            if registro["Mês/Ano"] == mes_ano:
+                registros.pop(i)
+                break
+        salvar_dados()
+        atualizar_tabela_historico()
+        mb.showinfo("Excluído", f"Registro de {mes_ano} foi removido.")
+
+def criar_interface_principal():
+    """Cria a janela principal do programa"""
+    global root, entry_luz, entry_agua, entry_jardineiro, entry_salario
+    global entry_servtec, entry_zelador, entry_tim, entry_arrecadado
+    global entry_mes_ano, lista_variaveis, tree
+    
+    root = tk.Tk()
+    root.title("Sistema de Gestão Condominial - 12 Casas")
+    root.geometry("1000x800")
+    root.configure(bg="#e8f5e9")  # Fundo verde claro
+    
+    # Carregar dados
+    carregar_dados()
+    
+    # Estilo personalizado
+    style = ttk.Style()
+    style.theme_use('clam')
+    style.configure("TNotebook", background="#e8f5e9")
+    style.configure("TNotebook.Tab", background="#c8e6c9", padding=[10, 5])
+    style.map("TNotebook.Tab", background=[("selected", "#4CAF50")])
+    
+    # Notebook (abas)
+    notebook = ttk.Notebook(root)
+    notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    
+    # ========== Aba 1: Registro Mensal ==========
+    frame_registro = ttk.Frame(notebook)
+    notebook.add(frame_registro, text="📝 Registro Mensal")
+    
+    # Frame com scroll
+    canvas = tk.Canvas(frame_registro, bg="#e8f5e9", highlightthickness=0)
+    scrollbar = ttk.Scrollbar(frame_registro, orient="vertical", command=canvas.yview)
+    scrollable_frame = tk.Frame(canvas, bg="#e8f5e9")
+    
+    scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+    canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+    
+    # Custos Fixos
+    frame_fixos = ttk.LabelFrame(scrollable_frame, text="💰 Custos Fixos", padding=15)
+    frame_fixos.pack(fill=tk.X, padx=10, pady=10)
+    
+    # Coluna esquerda
+    left_column = ttk.Frame(frame_fixos)
+    left_column.grid(row=0, column=0, sticky="n", padx=10)
+    
+    ttk.Label(left_column, text="📅 Mês/Ano:", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky=tk.W, padx=5, pady=8)
+    entry_mes_ano = ttk.Entry(left_column, width=25, font=("Arial", 10))
+    entry_mes_ano.grid(row=0, column=1, sticky=tk.W, padx=5, pady=8)
+    entry_mes_ano.insert(0, datetime.now().strftime("%m/%Y"))
+    
+    ttk.Label(left_column, text="💡 Luz (R$):", font=("Arial", 10)).grid(row=1, column=0, sticky=tk.W, padx=5, pady=8)
+    entry_luz = ttk.Entry(left_column, width=25, font=("Arial", 10))
+    entry_luz.grid(row=1, column=1, sticky=tk.W, padx=5, pady=8)
+    entry_luz.insert(0, "0")
+    
+    ttk.Label(left_column, text="💧 Água (R$):", font=("Arial", 10)).grid(row=2, column=0, sticky=tk.W, padx=5, pady=8)
+    entry_agua = ttk.Entry(left_column, width=25, font=("Arial", 10))
+    entry_agua.grid(row=2, column=1, sticky=tk.W, padx=5, pady=8)
+    entry_agua.insert(0, "0")
+    
+    ttk.Label(left_column, text="🌿 Jardineiro (R$):", font=("Arial", 10)).grid(row=3, column=0, sticky=tk.W, padx=5, pady=8)
+    entry_jardineiro = ttk.Entry(left_column, width=25, font=("Arial", 10))
+    entry_jardineiro.grid(row=3, column=1, sticky=tk.W, padx=5, pady=8)
+    entry_jardineiro.insert(0, "0")
+    
+    ttk.Label(left_column, text="👨‍💼 Salário Síndico (R$):", font=("Arial", 10)).grid(row=4, column=0, sticky=tk.W, padx=5, pady=8)
+    entry_salario = ttk.Entry(left_column, width=25, font=("Arial", 10))
+    entry_salario.grid(row=4, column=1, sticky=tk.W, padx=5, pady=8)
+    entry_salario.insert(0, "0")
+    
+    # Coluna direita
+    right_column = ttk.Frame(frame_fixos)
+    right_column.grid(row=0, column=1, sticky="n", padx=10)
+    
+    ttk.Label(right_column, text="🔧 Servtec (R$):", font=("Arial", 10)).grid(row=0, column=0, sticky=tk.W, padx=5, pady=8)
+    entry_servtec = ttk.Entry(right_column, width=25, font=("Arial", 10))
+    entry_servtec.grid(row=0, column=1, sticky=tk.W, padx=5, pady=8)
+    entry_servtec.insert(0, "0")
+    
+    ttk.Label(right_column, text="🧹 Zelador (R$):", font=("Arial", 10)).grid(row=1, column=0, sticky=tk.W, padx=5, pady=8)
+    entry_zelador = ttk.Entry(right_column, width=25, font=("Arial", 10))
+    entry_zelador.grid(row=1, column=1, sticky=tk.W, padx=5, pady=8)
+    entry_zelador.insert(0, "0")
+    
+    ttk.Label(right_column, text="📱 Tim (operadora) (R$):", font=("Arial", 10)).grid(row=2, column=0, sticky=tk.W, padx=5, pady=8)
+    entry_tim = ttk.Entry(right_column, width=25, font=("Arial", 10))
+    entry_tim.grid(row=2, column=1, sticky=tk.W, padx=5, pady=8)
+    entry_tim.insert(0, "0")
+    
+    ttk.Label(right_column, text="🏦 Total Arrecadado (R$):", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky=tk.W, padx=5, pady=8)
+    entry_arrecadado = ttk.Entry(right_column, width=25, font=("Arial", 10, "bold"))
+    entry_arrecadado.grid(row=3, column=1, sticky=tk.W, padx=5, pady=8)
+    
+    # Custos Variáveis
+    frame_variaveis = ttk.LabelFrame(scrollable_frame, text="📎 Custos Variáveis (com anexo)", padding=15)
+    frame_variaveis.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    
+    frame_botoes_var = ttk.Frame(frame_variaveis)
+    frame_botoes_var.pack(fill=tk.X, pady=5)
+    
+    ttk.Button(frame_botoes_var, text="➕ Adicionar Despesa", command=adicionar_despesa_variavel).pack(side=tk.LEFT, padx=5)
+    ttk.Button(frame_botoes_var, text="❌ Remover Selecionada", command=remover_despesa_variavel).pack(side=tk.LEFT, padx=5)
+    ttk.Button(frame_botoes_var, text="👁️ Visualizar Anexo", command=visualizar_anexo).pack(side=tk.LEFT, padx=5)
+    
+    lista_variaveis = tk.Listbox(frame_variaveis, height=6, width=80, font=("Arial", 9), bg="#f5f5f5", fg="#333333")
+    lista_variaveis.pack(fill=tk.BOTH, expand=True, pady=10, padx=5)
+    
+    # Botões principais
+    frame_botoes_principais = tk.Frame(scrollable_frame, bg="#e8f5e9")
+    frame_botoes_principais.pack(fill=tk.X, padx=10, pady=10)
+    
+    btn_registrar = tk.Button(frame_botoes_principais, text="💾 Registrar Mês", command=registrar_mes, 
+                              bg="#4CAF50", fg="white", font=("Arial", 10, "bold"), width=20)
+    btn_registrar.pack(side=tk.LEFT, padx=5)
+    
+    btn_limpar = tk.Button(frame_botoes_principais, text="🧹 Limpar Campos", command=limpar_campos,
+                          bg="#FF9800", fg="white", font=("Arial", 10, "bold"), width=20)
+    btn_limpar.pack(side=tk.LEFT, padx=5)
+    
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    
+    # ========== Aba 2: Histórico ==========
+    frame_historico = ttk.Frame(notebook)
+    notebook.add(frame_historico, text="📊 Histórico")
+    
+    # Frame para a tabela
+    frame_tabela = ttk.Frame(frame_historico)
+    frame_tabela.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    
+    # Treeview
+    columns = ("Mês/Ano", "Arrecadado", "Despesas Totais", "Saldo")
+    tree = ttk.Treeview(frame_tabela, columns=columns, show="headings", height=20)
+    tree.heading("Mês/Ano", text="📅 Mês/Ano")
+    tree.heading("Arrecadado", text="💰 Arrecadado (R$)")
+    tree.heading("Despesas Totais", text="💸 Despesas Totais (R$)")
+    tree.heading("Saldo", text="⚖️ Saldo (R$)")
+    
+    tree.column("Mês/Ano", width=120, anchor="center")
+    tree.column("Arrecadado", width=150, anchor="center")
+    tree.column("Despesas Totais", width=150, anchor="center")
+    tree.column("Saldo", width=150, anchor="center")
+    
+    scrollbar_tabela = ttk.Scrollbar(frame_tabela, orient=tk.VERTICAL, command=tree.yview)
+    tree.configure(yscrollcommand=scrollbar_tabela.set)
+    tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar_tabela.pack(side=tk.RIGHT, fill=tk.Y)
+    
+    # Frame dos botões do histórico
+    frame_botoes_historico = tk.Frame(frame_historico, bg="#e8f5e9")
+    frame_botoes_historico.pack(fill=tk.X, padx=10, pady=10)
+    
+    btn_exportar = tk.Button(frame_botoes_historico, text="📎 Exportar para Excel", command=exportar_para_excel,
+                             bg="#2196F3", fg="white", font=("Arial", 10, "bold"), width=20)
+    btn_exportar.pack(side=tk.LEFT, padx=5)
+    
+    btn_excluir = tk.Button(frame_botoes_historico, text="🗑️ Excluir Registro", command=excluir_registro,
+                           bg="#f44336", fg="white", font=("Arial", 10, "bold"), width=20)
+    btn_excluir.pack(side=tk.LEFT, padx=5)
+    
+    # Inicializa a tabela com os registros carregados
+    atualizar_tabela_historico()
+    
+    root.mainloop()
+
+# ============================================
+# ========== FUNÇÕES DE LOGIN ================
+# ============================================
+
+def verificar_login(janela_login, entry_usuario, entry_senha, tentativas):
+    """Verifica as credenciais do usuário"""
+    usuario = entry_usuario.get()
+    senha = entry_senha.get()
+    
+    if usuario == USUARIO_CORRETO and senha == SENHA_CORRETA:
+        mb.showinfo("✅ Sucesso", "Login realizado com sucesso!")
+        janela_login.destroy()
+        criar_interface_principal()
+    else:
+        tentativas[0] += 1
+        restantes = MAX_TENTATIVAS - tentativas[0]
+        
+        if tentativas[0] >= MAX_TENTATIVAS:
+            mb.showerror("❌ Acesso Bloqueado", 
+                        f"Tentativas excedidas!\nO programa será fechado.")
+            janela_login.destroy()
+        else:
+            mb.showerror("❌ Erro de Login", 
+                        f"Usuário ou senha incorretos!\nTentativas restantes: {restantes}")
+            entry_senha.delete(0, tk.END)
+            entry_senha.focus()
+
+def mostrar_tela_login():
+    """Cria a tela de login"""
+    tentativas = [0]
+    
+    janela_login = tk.Tk()
+    janela_login.title("Login - Sistema Condomínio")
+    janela_login.geometry("400x350")
+    janela_login.configure(bg="#f0f0f0")
+    
+    # Centralizar
+    janela_login.update_idletasks()
+    largura = 400
+    altura = 350
+    x = (janela_login.winfo_screenwidth() // 2) - (largura // 2)
+    y = (janela_login.winfo_screenheight() // 2) - (altura // 2)
+    janela_login.geometry(f"{largura}x{altura}+{x}+{y}")
+    
+    # Frame superior colorido
+    frame_topo = tk.Frame(janela_login, bg="#2E7D32", height=100)
+    frame_topo.pack(fill=tk.X)
+    
+    tk.Label(frame_topo, text="🏢 Condomínio Itamaraty", 
+             font=("Arial", 16, "bold"), bg="#2E7D32", fg="white").pack(pady=15)
+    
+    tk.Label(frame_topo, text="Sistema de Gestão Financeira", 
+             font=("Arial", 10), bg="#2E7D32", fg="#e8f5e9").pack()
+    
+    # Frame principal
+    frame_principal = tk.Frame(janela_login, bg="#f5f5f5")
+    frame_principal.pack(fill=tk.BOTH, expand=True, padx=30, pady=30)
+    
+    # Usuário
+    tk.Label(frame_principal, text="👤 Usuário:", bg="#f5f5f5", 
+             font=("Arial", 11, "bold")).grid(row=0, column=0, sticky=tk.W, pady=10)
+    entry_usuario = tk.Entry(frame_principal, width=25, font=("Arial", 11))
+    entry_usuario.grid(row=0, column=1, pady=10, padx=10)
+    
+    # Senha
+    tk.Label(frame_principal, text="🔒 Senha:", bg="#f5f5f5", 
+             font=("Arial", 11, "bold")).grid(row=1, column=0, sticky=tk.W, pady=10)
+    entry_senha = tk.Entry(frame_principal, width=25, font=("Arial", 11), show="•")
+    entry_senha.grid(row=1, column=1, pady=10, padx=10)
+    
+    # Função de login
+    def fazer_login():
+        verificar_login(janela_login, entry_usuario, entry_senha, tentativas)
+    
+    # Botão de login
+    btn_login = tk.Button(frame_principal, text="🔓 Entrar no Sistema", 
+                         command=fazer_login,
+                         bg="#4CAF50", fg="white", font=("Arial", 11, "bold"),
+                         width=20, height=1, cursor="hand2")
+    btn_login.grid(row=2, column=0, columnspan=2, pady=20)
+    
+    # Informação adicional
+    tk.Label(frame_principal, text="Acesso restrito ao síndico", 
+             bg="#f5f5f5", font=("Arial", 9), fg="gray").grid(row=3, column=0, columnspan=2)
+    
+    # Versão
+    tk.Label(frame_principal, text="Versão 2.0", 
+             bg="#f5f5f5", font=("Arial", 8), fg="gray").grid(row=4, column=0, columnspan=2, pady=10)
+    
+    # Tecla Enter
+    janela_login.bind('<Return>', lambda event: fazer_login())
+    
+    # Foco inicial
+    entry_usuario.focus()
+    
+    janela_login.mainloop()
+
+# ============================================
+# ========== INÍCIO DO PROGRAMA ==============
+# ============================================
+
+if __name__ == "__main__":
+    mostrar_tela_login()
